@@ -2,9 +2,19 @@ import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { format } from 'date-fns'
-import { ArrowLeft, User, MapPin, Phone, Mail, FileText } from 'lucide-react'
+import { ArrowLeft, User, MapPin, Phone, Mail, FileText, Check, X, ArrowRight, Clock, Package, CreditCard, CheckCircle } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { CONFIG } from '../../config'
+
+const STATUS_CONFIG = {
+    pending: { label: '待處理', color: 'yellow', icon: Clock, desc: '訂單剛成立，等待付款確認。' },
+    paid: { label: '已付款', color: 'purple', icon: CreditCard, desc: '確認收款，準備出貨中。' },
+    shipped: { label: '已出貨', color: 'blue', icon: Package, desc: '商品已寄出，運送中。' },
+    completed: { label: '已完成', color: 'green', icon: CheckCircle, desc: '訂單已完成，交易結束。' },
+    cancelled: { label: '已取消', color: 'gray', icon: X, desc: '訂單已取消，無效。' },
+}
+
+const STEPS = ['pending', 'paid', 'shipped', 'completed']
 
 export default function OrderDetail() {
     const { id } = useParams()
@@ -19,7 +29,7 @@ export default function OrderDetail() {
             const { data: orderData } = await supabase
                 .from('orders')
                 .select('*')
-                .eq(id.includes('-') ? 'id' : 'id', id) // Handle potential UUID vs ID
+                .eq(id.includes('-') ? 'id' : 'id', id)
                 .single()
 
             const { data: itemData } = await supabase
@@ -36,7 +46,8 @@ export default function OrderDetail() {
     }, [id])
 
     const updateStatus = async (newStatus) => {
-        if (!window.confirm(`確定要將狀態更改為 ${newStatus} 嗎？`)) return
+        const label = STATUS_CONFIG[newStatus].label
+        if (!window.confirm(`確定要將狀態更改為「${label}」嗎？`)) return
 
         const { error } = await supabase
             .from('orders')
@@ -45,11 +56,23 @@ export default function OrderDetail() {
 
         if (!error) {
             setOrder({ ...order, status: newStatus })
+        } else {
+            alert('更新失敗')
         }
     }
 
     if (loading) return <div className="p-12 text-center text-gray-500">載入中...</div>
     if (!order) return <div className="p-12 text-center text-gray-500">訂單不存在</div>
+
+    const currentStatus = STATUS_CONFIG[order.status] || STATUS_CONFIG.pending
+    const currentStepIndex = STEPS.indexOf(order.status)
+    const isCancelled = order.status === 'cancelled'
+
+    // Compute progress bar state
+    // If cancelled, show process as stopped or greyed out?
+    // Let's stick to the steps. If cancelled, we don't really highlight the steps after pending?
+    // Or we just show the steps and none are "active" except maybe previous ones?
+    // User image shows simple steps. Let's make a stepper.
 
     return (
         <div className="max-w-4xl mx-auto space-y-8 pb-10 animate-in fade-in duration-500">
@@ -63,14 +86,6 @@ export default function OrderDetail() {
                 <div>
                     <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
                         訂單 #{order.id.slice(0, 8).toUpperCase()}
-                        <span className={cn("text-xs px-2.5 py-0.5 rounded-full border font-normal",
-                            order.status === 'pending' ? "bg-yellow-50 text-yellow-700 border-yellow-200" :
-                                order.status === 'paid' ? "bg-purple-50 text-purple-700 border-purple-200" :
-                                    order.status === 'shipped' ? "bg-blue-50 text-blue-700 border-blue-200" :
-                                        "bg-gray-50 text-gray-600 border-gray-200"
-                        )}>
-                            {order.status}
-                        </span>
                     </h2>
                     <p className="text-sm text-gray-500 mt-1">
                         建立時間: {format(new Date(order.created_at), 'yyyy/MM/dd HH:mm')}
@@ -78,39 +93,138 @@ export default function OrderDetail() {
                 </div>
             </div>
 
-            {/* Status Selection */}
-            <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
-                <p className="text-sm font-bold text-gray-500 mb-3">訂單狀態</p>
-                <div className="flex flex-wrap gap-2">
-                    {[
-                        { value: 'pending', label: '待處理', color: 'yellow' },
-                        { value: 'paid', label: '已付款', color: 'purple' },
-                        { value: 'shipped', label: '已出貨', color: 'blue' },
-                        { value: 'completed', label: '已完成', color: 'green' },
-                        { value: 'cancelled', label: '已取消', color: 'gray' }
-                    ].map((status) => (
-                        <button
-                            key={status.value}
-                            onClick={() => updateStatus(status.value)}
-                            disabled={order.status === status.value}
-                            className={cn(
-                                "px-4 py-2 font-bold rounded-lg transition-all text-sm border-2",
-                                order.status === status.value
-                                    ? status.color === 'yellow' ? "bg-yellow-500 text-white border-yellow-500"
-                                        : status.color === 'purple' ? "bg-purple-500 text-white border-purple-500"
-                                            : status.color === 'blue' ? "bg-blue-500 text-white border-blue-500"
-                                                : status.color === 'green' ? "bg-green-500 text-white border-green-500"
-                                                    : "bg-gray-500 text-white border-gray-500"
-                                    : status.color === 'yellow' ? "border-yellow-200 text-yellow-700 hover:bg-yellow-50"
-                                        : status.color === 'purple' ? "border-purple-200 text-purple-700 hover:bg-purple-50"
-                                            : status.color === 'blue' ? "border-blue-200 text-blue-700 hover:bg-blue-50"
-                                                : status.color === 'green' ? "border-green-200 text-green-700 hover:bg-green-50"
-                                                    : "border-gray-200 text-gray-600 hover:bg-gray-50"
+            {/* Status Section */}
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+                <div className="mb-8">
+                    <h3 className="text-sm font-bold text-gray-900 mb-4">訂單狀態</h3>
+                    <div className={cn("inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold border",
+                        currentStatus.color === 'yellow' && "bg-yellow-50 text-yellow-700 border-yellow-200",
+                        currentStatus.color === 'purple' && "bg-purple-50 text-purple-700 border-purple-200",
+                        currentStatus.color === 'blue' && "bg-blue-50 text-blue-700 border-blue-200",
+                        currentStatus.color === 'green' && "bg-green-50 text-green-700 border-green-200",
+                        currentStatus.color === 'gray' && "bg-gray-100 text-gray-600 border-gray-200",
+                    )}>
+                        <currentStatus.icon className="w-4 h-4" />
+                        {currentStatus.label}
+                    </div>
+                    <p className="text-sm text-gray-500 mt-3 flex items-center gap-2">
+                        <span className="w-1 h-1 rounded-full bg-gray-400" />
+                        {currentStatus.desc}
+                    </p>
+                </div>
+
+                {/* Actions (Only show if not completed or cancelled) */}
+                {!['completed', 'cancelled'].includes(order.status) && (
+                    <div className="mb-10 p-4 bg-gray-50 rounded-xl border border-gray-100">
+                        <p className="text-xs font-bold text-gray-400 uppercase mb-3">變更狀態 (Next Actions)</p>
+                        <div className="flex flex-wrap gap-3">
+                            {order.status === 'pending' && (
+                                <>
+                                    <button
+                                        onClick={() => updateStatus('paid')}
+                                        className="flex items-center gap-2 px-6 py-3 bg-black text-white font-bold rounded-xl hover:bg-gray-800 transition-all active:scale-95 shadow-lg"
+                                    >
+                                        <ArrowRight className="w-4 h-4" />
+                                        標記為「已付款」
+                                    </button>
+                                    <button
+                                        onClick={() => updateStatus('cancelled')}
+                                        className="flex items-center gap-2 px-6 py-3 bg-white text-red-600 border border-red-100 font-bold rounded-xl hover:bg-red-50 transition-all active:scale-95"
+                                    >
+                                        <X className="w-4 h-4" />
+                                        標記為「已取消」
+                                    </button>
+                                </>
                             )}
-                        >
-                            {status.label}
-                        </button>
-                    ))}
+                            {order.status === 'paid' && (
+                                <>
+                                    <button
+                                        onClick={() => updateStatus('shipped')}
+                                        className="flex items-center gap-2 px-6 py-3 bg-black text-white font-bold rounded-xl hover:bg-gray-800 transition-all active:scale-95 shadow-lg"
+                                    >
+                                        <ArrowRight className="w-4 h-4" />
+                                        標記為「已出貨」
+                                    </button>
+                                    <button
+                                        onClick={() => updateStatus('cancelled')}
+                                        className="flex items-center gap-2 px-6 py-3 bg-white text-red-600 border border-red-100 font-bold rounded-xl hover:bg-red-50 transition-all active:scale-95"
+                                    >
+                                        <X className="w-4 h-4" />
+                                        標記為「已取消」 (退款/缺貨)
+                                    </button>
+                                </>
+                            )}
+                            {order.status === 'shipped' && (
+                                <>
+                                    <button
+                                        onClick={() => updateStatus('completed')}
+                                        className="flex items-center gap-2 px-6 py-3 bg-black text-white font-bold rounded-xl hover:bg-gray-800 transition-all active:scale-95 shadow-lg"
+                                    >
+                                        <Check className="w-4 h-4" />
+                                        標記為「已完成」
+                                    </button>
+                                    <button
+                                        onClick={() => updateStatus('cancelled')}
+                                        className="flex items-center gap-2 px-6 py-3 bg-white text-red-600 border border-red-100 font-bold rounded-xl hover:bg-red-50 transition-all active:scale-95"
+                                    >
+                                        <X className="w-4 h-4" />
+                                        標記為「已取消」 (退貨/遺失)
+                                    </button>
+                                </>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {/* Stepper / Progress Bar */}
+                <div className="relative">
+                    <div className="absolute top-1/2 left-0 w-full h-0.5 bg-gray-100 -translate-y-1/2 z-0" />
+                    <div className="relative z-10 flex justify-between">
+                        {STEPS.map((stepKey, index) => {
+                            const config = STATUS_CONFIG[stepKey]
+                            // Logic:
+                            // - Completed steps: index < currentStepIndex (if not cancelled)
+                            // - Current step: index === currentStepIndex
+                            // - Future steps: index > currentStepIndex
+
+                            let state = 'future' // future, current, completed
+                            if (isCancelled) {
+                                state = 'disabled'
+                            } else {
+                                if (index < currentStepIndex) state = 'completed'
+                                else if (index === currentStepIndex) state = 'current'
+                            }
+
+                            // Special case: if cancelled, maybe just gray out everything?
+                            // Let's highlight the current status if match? 
+                            // Actually if cancelled, stepKey !== 'cancelled', so it won't match any step in the generic stepper.
+                            // But usually users want to see where it stopped. 
+                            // If Cancelled, let's just make everything gray.
+
+                            return (
+                                <div key={stepKey} className="flex flex-col items-center gap-2 bg-white px-2">
+                                    <div className={cn(
+                                        "w-4 h-4 rounded-full border-2 transition-colors duration-300",
+                                        state === 'completed' && "bg-green-500 border-green-500",
+                                        state === 'current' && "bg-white border-black ring-4 ring-black/5",
+                                        state === 'future' && "bg-white border-gray-300",
+                                        state === 'disabled' && "bg-gray-100 border-gray-300"
+                                    )}>
+                                        {state === 'completed' && <Check className="w-full h-full text-white p-0.5" />}
+                                    </div>
+                                    <span className={cn(
+                                        "text-xs font-bold transition-colors duration-300",
+                                        state === 'completed' && "text-green-600",
+                                        state === 'current' && "text-black",
+                                        state === 'future' && "text-gray-400",
+                                        state === 'disabled' && "text-gray-300"
+                                    )}>
+                                        {config.label}
+                                    </span>
+                                </div>
+                            )
+                        })}
+                    </div>
                 </div>
             </div>
 
