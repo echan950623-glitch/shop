@@ -13,12 +13,21 @@ export default function Home() {
             setLoading(true);
             const { data, error } = await supabase
                 .from('products')
-                .select('*')
+                .select('*, product_images(url, display_order)')
                 .eq('is_active', true)
-                .order('created_at', { ascending: false });
+                .order('created_at', { ascending: false })
+                .order('display_order', { ascending: true, foreignTable: 'product_images' });
 
-            if (error) console.error('Error fetching products:', error);
-            else setProducts(data);
+            if (error) {
+                console.error('Error fetching products:', error);
+            } else {
+                // Map to include image_url for backward compatibility/ease of use
+                const productsWithImages = data.map(p => ({
+                    ...p,
+                    image_url: p.product_images?.[0]?.url || p.image_url
+                }));
+                setProducts(productsWithImages);
+            }
             setLoading(false);
         }
 
@@ -36,10 +45,10 @@ export default function Home() {
             <section className="bg-white pt-12 pb-16 px-4 mb-8 border-b border-gray-100">
                 <div className="max-w-6xl mx-auto text-center">
                     <h1 className="text-4xl md:text-6xl font-extrabold text-gray-900 mb-6 tracking-tight animate-in fade-in slide-in-from-bottom-4 duration-700">
-                        定義你的專屬風格
+                        什麼都賣，什麼都不奇怪
                     </h1>
                     <p className="text-lg md:text-xl text-gray-500 mb-10 max-w-2xl mx-auto leading-relaxed animate-in fade-in slide-in-from-bottom-5 duration-700 delay-100">
-                        精選本季最新潮流單品，從休閒舒適到都會機能，全館滿額免運優惠中。
+                        什麼都賣，什麼都不奇怪
                     </p>
                     <button
                         onClick={() => document.getElementById('products').scrollIntoView({ behavior: 'smooth' })}

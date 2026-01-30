@@ -3,6 +3,65 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { Upload, X, Plus, Loader, ArrowLeft, Save } from 'lucide-react'
 import { CONFIG } from '../../config'
+import {
+    DndContext,
+    closestCenter,
+    KeyboardSensor,
+    PointerSensor,
+    useSensor,
+    useSensors,
+} from '@dnd-kit/core';
+import {
+    arrayMove,
+    SortableContext,
+    sortableKeyboardCoordinates,
+    useSortable,
+    rectSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+
+
+// Sortable Image Item Component
+function SortableImage({ id, url, index, onRemove }) {
+    const {
+        attributes,
+        listeners,
+        setNodeRef,
+        transform,
+        transition,
+        isDragging
+    } = useSortable({ id });
+
+    const style = {
+        transform: CSS.Transform.toString(transform),
+        transition,
+        zIndex: isDragging ? 20 : 'auto',
+        opacity: isDragging ? 0.5 : 1,
+    };
+
+    return (
+        <div
+            ref={setNodeRef}
+            style={style}
+            {...attributes}
+            {...listeners}
+            className="relative group aspect-square bg-gray-100 rounded-xl overflow-hidden border border-gray-200 cursor-move touch-none"
+        >
+            <img src={url} alt={`Product ${index}`} className="h-full w-full object-cover block pointer-events-none" />
+            <button
+                type="button"
+                onPointerDown={(e) => e.stopPropagation()} // Prevent drag start when clicking delete
+                onClick={() => onRemove(index)}
+                className="absolute top-2 right-2 p-1.5 bg-red-500 text-white rounded-full opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity z-10 hover:bg-red-600"
+            >
+                <X className="w-4 h-4" />
+            </button>
+            <div className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-xs py-1 text-center pointer-events-none">
+                {index === 0 ? '封面圖' : `順序 ${index}`}
+            </div>
+        </div>
+    );
+}
 
 export default function ProductEditor() {
     const { id } = useParams()
@@ -18,6 +77,7 @@ export default function ProductEditor() {
         is_active: true
     })
     const [variants, setVariants] = useState([{ size: 'F', stock: 10 }])
+    const [images, setImages] = useState([]) // New state for multiple images
     const [uploading, setUploading] = useState(false)
 
     useEffect(() => {
@@ -39,6 +99,20 @@ export default function ProductEditor() {
                 if (vs && vs.length > 0) {
                     setVariants(vs)
                 }
+
+                // Fetch Images
+                const { data: imgs } = await supabase
+                    .from('product_images')
+                    .select('*')
+                    .eq('product_id', id)
+                    .order('display_order', { ascending: true })
+
+                if (imgs && imgs.length > 0) {
+                    setImages(imgs)
+                } else if (product.image_url) {
+                    // Fallback for legacy data if migration script wasn't run or partial
+                    setImages([{ id: 'legacy', url: product.image_url, display_order: 0 }])
+                }
             }
             setLoading(false)
         }
@@ -51,29 +125,43 @@ export default function ProductEditor() {
     const handleImageUpload = async (e) => {
         try {
             setUploading(true)
-            const file = e.target.files[0]
-            if (!file) return
+            const files = Array.from(e.target.files)
+            if (files.length === 0) return
 
-            const fileExt = file.name.split('.').pop()
-            const fileName = `${Math.random()}.${fileExt}`
-            const filePath = `${fileName}`
+            const newImages = []
 
-            const { error: uploadError } = await supabase.storage
-                .from('product-images')
-                .upload(filePath, file)
+            for (const file of files) {
+                const fileExt = file.name.split('.').pop()
+                const fileName = `${Math.random()}.${fileExt}`
+                const filePath = `${fileName}`
 
-            if (uploadError) throw uploadError
+                const { error: uploadError } = await supabase.storage
+                    .from('product-images')
+                    .upload(filePath, file)
 
-            const { data } = supabase.storage
-                .from('product-images')
-                .getPublicUrl(filePath)
+                if (uploadError) throw uploadError
 
-            setFormData({ ...formData, image_url: data.publicUrl })
+                const { data } = supabase.storage
+                    .from('product-images')
+                    .getPublicUrl(filePath)
+
+                newImages.push({
+                    id: `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                    url: data.publicUrl
+                })
+            }
+
+            // Pending images (not saved to DB yet, will be saved on Submit)
+            setImages([...images, ...newImages])
         } catch (error) {
             alert('圖片上傳失敗 (請確認已登入且有權限): ' + error.message)
         } finally {
             setUploading(false)
         }
+    }
+
+    const removeImage = (index) => {
+        setImages(images.filter((_, i) => i !== index))
     }
 
     const handleVariantChange = (index, field, value) => {
@@ -108,7 +196,7 @@ export default function ProductEditor() {
             const productData = {
                 name: formData.name,
                 price: parseInt(formData.price),
-                image_url: formData.image_url,
+                // image_url: formData.image_url, // No longer directly setting this from state, logic moved to side effect
                 description: formData.description,
                 is_active: formData.is_active
             }
@@ -139,6 +227,38 @@ export default function ProductEditor() {
                 if (variantError) throw variantError
             }
 
+            // Image Logic
+            // 1. Delete existing images relations (simple approach)
+            if (isEdit) {
+                await supabase.from('product_images').delete().eq('product_id', productId)
+            }
+
+            // 2. Insert new relations
+            const imageInserts = images.map((img, idx) => ({
+                product_id: productId,
+                url: img.url,
+                display_order: idx
+            }))
+
+            if (imageInserts.length > 0) {
+                const { error: imgError } = await supabase
+                    .from('product_images')
+                    .insert(imageInserts)
+                if (imgError) throw imgError
+
+                // Update the legacy image_url column with the first image for backward compatibility
+                await supabase
+                    .from('products')
+                    .update({ image_url: imageInserts[0].url })
+                    .eq('id', productId)
+            } else {
+                // Clear legacy image if no images
+                await supabase
+                    .from('products')
+                    .update({ image_url: null })
+                    .eq('id', productId)
+            }
+
             navigate(`${CONFIG.ADMIN_PATH}/products`)
         } catch (error) {
             console.error('Submit Error:', error)
@@ -147,6 +267,32 @@ export default function ProductEditor() {
             setLoading(false)
         }
     }
+
+
+
+    // Sensors configuration
+    const sensors = useSensors(
+        useSensor(PointerSensor, {
+            activationConstraint: {
+                distance: 8,
+            },
+        }),
+        useSensor(KeyboardSensor, {
+            coordinateGetter: sortableKeyboardCoordinates,
+        })
+    );
+
+    const handleDragEnd = (event) => {
+        const { active, over } = event;
+
+        if (active.id !== over.id) {
+            setImages((items) => {
+                const oldIndex = items.findIndex((item) => item.id === active.id);
+                const newIndex = items.findIndex((item) => item.id === over.id);
+                return arrayMove(items, oldIndex, newIndex);
+            });
+        }
+    };
 
     return (
         <div className="max-w-3xl mx-auto space-y-8 pb-10">
@@ -200,24 +346,46 @@ export default function ProductEditor() {
                         </div>
 
                         <div className="md:col-span-2 space-y-2">
-                            <label className="block text-sm font-bold text-gray-700">商品圖片</label>
-                            <div className="mt-1 flex items-start gap-6">
-                                <div className="h-32 w-32 bg-gray-100 rounded-xl overflow-hidden border border-gray-100 flex-shrink-0 flex items-center justify-center">
-                                    {formData.image_url ? (
-                                        <img src={formData.image_url} alt="Preview" className="h-full w-full object-cover" />
-                                    ) : (
-                                        <span className="text-gray-400 text-xs">預覽</span>
-                                    )}
-                                </div>
-                                <div className="flex-1">
-                                    <label className="cursor-pointer inline-flex items-center px-4 py-2 bg-white border border-gray-300 rounded-lg shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
-                                        <Upload className="h-4 w-4 mr-2" />
-                                        {uploading ? '上傳中...' : '選擇圖片'}
-                                        <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} />
-                                    </label>
-                                    <p className="mt-2 text-xs text-gray-500">支援 JPG, PNG, WebP。建議尺寸 800x1000。</p>
-                                </div>
-                            </div>
+                            <label className="block text-sm font-bold text-gray-700">商品圖片 (可多張)</label>
+
+                            <DndContext
+                                sensors={sensors}
+                                collisionDetection={closestCenter}
+                                onDragEnd={handleDragEnd}
+                            >
+                                <SortableContext
+                                    items={images.map(img => img.id)}
+                                    strategy={rectSortingStrategy}
+                                >
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-2">
+                                        {images.map((img, idx) => (
+                                            <SortableImage
+                                                key={img.id}
+                                                id={img.id}
+                                                url={img.url}
+                                                index={idx}
+                                                onRemove={removeImage}
+                                            />
+                                        ))}
+
+                                        <label className="cursor-pointer aspect-square flex flex-col items-center justify-center bg-gray-50 border-2 border-dashed border-gray-300 rounded-xl hover:bg-gray-100 hover:border-gray-400 transition-all">
+                                            <Upload className="h-8 w-8 text-gray-400 mb-2" />
+                                            <span className="text-sm text-gray-500 font-medium">
+                                                {uploading ? '上傳中...' : '新增圖片'}
+                                            </span>
+                                            <input
+                                                type="file"
+                                                className="hidden"
+                                                accept="image/*"
+                                                multiple
+                                                onChange={handleImageUpload}
+                                                disabled={uploading}
+                                            />
+                                        </label>
+                                    </div>
+                                </SortableContext>
+                            </DndContext>
+                            <p className="mt-2 text-xs text-gray-500">第一張將作為封面圖。拖曳圖片即可調整顯示順序。</p>
                         </div>
                     </div>
                 </div>

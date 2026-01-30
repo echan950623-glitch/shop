@@ -11,10 +11,12 @@ export default function ProductDetail() {
     const { addToCart } = useCart();
 
     const [product, setProduct] = useState(null);
+    const [images, setImages] = useState([]);
     const [variants, setVariants] = useState([]);
     const [selectedVariant, setSelectedVariant] = useState(null);
     const [quantity, setQuantity] = useState(1);
     const [loading, setLoading] = useState(true);
+    const [currentImageIndex, setCurrentImageIndex] = useState(0);
 
     useEffect(() => {
         const fetchProduct = async () => {
@@ -40,6 +42,19 @@ export default function ProductDetail() {
                     .select('*')
                     .eq('product_id', id);
 
+                // Fetch Images
+                const { data: imgsData } = await supabase
+                    .from('product_images')
+                    .select('*')
+                    .eq('product_id', id)
+                    .order('display_order', { ascending: true });
+
+                if (imgsData && imgsData.length > 0) {
+                    setImages(imgsData);
+                } else if (productData.image_url) {
+                    setImages([{ id: 'legacy', url: productData.image_url }]);
+                }
+
                 if (vError) {
                     console.error('Error fetching variants:', vError);
                 } else {
@@ -58,6 +73,9 @@ export default function ProductDetail() {
     if (!product) return <div className="min-h-screen flex items-center justify-center bg-gray-50">Product not found</div>;
 
     const isSoldOut = variants.every(v => v.stock === 0);
+    // currentImageIndex moved up
+
+    const mainImage = images.length > 0 ? images[currentImageIndex]?.url : product?.image_url;
 
     const handleAddToCart = () => {
         if (selectedVariant) {
@@ -91,14 +109,33 @@ export default function ProductDetail() {
                     <X className="w-5 h-5 text-gray-600" />
                 </button>
 
-                {/* 左側：圖片 */}
-                <div className="w-full md:w-1/2 h-96 md:h-auto bg-gray-100 relative group">
-                    <img
-                        src={product.image_url}
-                        alt={product.name}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
-                        onError={handleImageError}
-                    />
+                {/* 左側：圖片輪播 */}
+                <div className="w-full md:w-1/2 h-96 md:h-auto bg-gray-100 relative group flex flex-col">
+                    <div className="flex-1 relative overflow-hidden">
+                        <img
+                            src={mainImage}
+                            alt={product.name}
+                            className="w-full h-full object-cover transition-all duration-500"
+                            onError={handleImageError}
+                        />
+                    </div>
+                    {/* Thumbnails */}
+                    {images.length > 1 && (
+                        <div className="flex gap-2 p-4 overflow-x-auto bg-white border-t border-gray-100">
+                            {images.map((img, idx) => (
+                                <button
+                                    key={idx}
+                                    onClick={() => setCurrentImageIndex(idx)}
+                                    className={cn(
+                                        "relative w-20 h-20 flex-shrink-0 rounded-lg overflow-hidden border-2 transition-all",
+                                        currentImageIndex === idx ? "border-black ring-2 ring-black/10" : "border-transparent opacity-70 hover:opacity-100 hover:border-gray-300"
+                                    )}
+                                >
+                                    <img src={img.url} alt={`Thumbnail ${idx}`} className="w-full h-full object-cover" />
+                                </button>
+                            ))}
+                        </div>
+                    )}
                 </div>
 
                 {/* 右側：詳細資訊 */}

@@ -14,18 +14,23 @@ export default function ProductList() {
         // 取得所有商品 (包含下架的)，並計算總庫存
         const { data, error } = await supabase
             .from('products')
-            .select('*, product_variants(stock)')
+            .select('*, product_variants(stock), product_images(url, display_order)')
             .order('created_at', { ascending: false })
+            .order('display_order', { ascending: true, foreignTable: 'product_images' })
 
         if (error) {
             console.error('Error fetching products:', error)
         } else {
-            // 計算每個商品的總庫存
-            const productsWithStock = data.map(product => ({
-                ...product,
-                totalStock: product.product_variants?.reduce((sum, v) => sum + (v.stock || 0), 0) || 0,
-                variantCount: product.product_variants?.length || 0
-            }))
+            // 計算每個商品的總庫存並設定圖片 (優先使用 product_images)
+            const productsWithStock = data.map(product => {
+                const firstImage = product.product_images?.[0]?.url
+                return {
+                    ...product,
+                    image_url: firstImage || product.image_url, // Prefer new table, fallback to old column
+                    totalStock: product.product_variants?.reduce((sum, v) => sum + (v.stock || 0), 0) || 0,
+                    variantCount: product.product_variants?.length || 0
+                }
+            })
             setProducts(productsWithStock)
         }
         setLoading(false)
